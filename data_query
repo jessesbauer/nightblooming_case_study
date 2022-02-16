@@ -1,0 +1,329 @@
+/* 
+DataSource Nightblooming Shop on Etsy Sales Data CVS files 
+Uploaded and queried in SSMS
+*/ 
+
+SELECT 
+    COUNT(*)
+FROM nightblooming..Orders;
+
+
+-- total # of orders, unique buyers and net profit per country from 2016-2021
+SELECT 
+    COUNT(OrderID) AS total_orders,
+    Country AS country,
+    COUNT(DISTINCT(FullName)) AS buyers,
+    ROUND(SUM(OrderNet), 2) as net_profit
+FROM 
+    nightblooming..Orders
+GROUP BY 
+    Country
+ORDER BY
+    total_orders DESC;
+
+
+-- top 10 countries for net profit
+SELECT 
+    Country AS country,
+    ROUND(SUM(OrderNet), 2) as net_profit
+FROM 
+    nightblooming..Orders
+GROUP BY 
+    Country
+ORDER BY
+    net_profit DESC
+LIMIT 10;
+
+
+-- top 10 countries for orders
+SELECT 
+    COUNT(OrderID) AS total_orders,
+    Country AS country,
+FROM 
+    nightblooming..Orders
+GROUP BY 
+    Country
+ORDER BY
+    total_orders DESC
+LIMIT 10;
+
+
+-- number of one-off customers vs repeat
+-- create temp table
+SELECT
+    CONVERT(DATE, OrderDate) AS OrderDate,
+	FullName,
+    ROW_NUMBER() OVER (PARTITION BY FullName ORDER BY CONVERT(DATE, OrderDate) ASC) AS CustomerOrderSequence,
+    LAG(CONVERT(DATE, OrderDate)) OVER (PARTITION BY FullName ORDER BY CONVERT(DATE, OrderDate) ASC) AS PreviousOrderDate
+FROM 
+    nightblooming..Orders
+GROUP BY 
+    OrderDate, FullName;
+
+DROP TABLE IF EXISTS #CustomerOrders
+CREATE TABLE #CustomerOrders
+	(OrderID float,
+	FullName nvarchar(255),
+	CustomerOrderSequence int,
+	PreviousOrderDate datetime,
+	OrderDate date,
+	OrderNet int
+	)
+INSERT INTO
+	#CustomerOrders
+SELECT
+	OrderID,
+	LTRIM(FullName) AS FullName,
+    ROW_NUMBER() OVER (PARTITION BY FullName ORDER BY CONVERT(DATE, OrderDate) ASC) AS CustomerOrderSequence,
+    LAG(CONVERT(DATE, OrderDate)) OVER (PARTITION BY FullName ORDER BY CONVERT(DATE, OrderDate) ASC) AS PreviousOrderDate,
+	CONVERT(DATE, OrderDate) AS InitialOrderDate,
+	OrderNet AS NetProfit
+FROM 
+    nightblooming..Orders
+GROUP BY 
+    OrderDate, FullName, OrderID, OrderNet
+ORDER BY FullName;
+
+-- checking
+SELECT *
+FROM #CustomerOrders
+
+
+-- top 10 spenders of 2021 who are repeat customers --
+SELECT TOP 10
+    cus.FullName AS customer,
+    ROUND(SUM(nbo.OrderNet),2) AS net_profit,
+    COUNT(cus.CustomerOrderSequence) AS total_orders
+FROM 
+    #CustomerOrders AS cus
+LEFT JOIN 
+    nightblooming..Orders AS nbo
+ON 
+    cus.OrderID = nbo.OrderID
+WHERE 
+    nbo.OrderDate BETWEEN '2021-01-01' AND '2021-12-31'
+GROUP BY 
+    cus.FullName
+ORDER BY 
+    net_profit DESC    
+
+
+-- top 10 spenders, total purchases, and locations from 2016-01-01 to 2021-12-31 --
+SELECT TOP 10
+    FullName,
+    ROUND(SUM(OrderNet),2) AS total_profit,
+	COUNT(OrderID) AS total_orders,
+    Country
+FROM 
+    nightblooming..Orders
+GROUP BY 
+    FullName, Country
+ORDER BY 
+    total_profit DESC;
+
+
+--find only first purchase date
+SELECT 
+    DISTINCT(FullName), 
+    MIN(OrderDate) OVER (PARTITION BY FullName) AS first_purchase_date 
+FROM 
+    nightblooming..Orders
+ORDER BY 
+    first_purchase_date ASC;
+
+
+-- percentage of sales per product --
+SELECT 
+    COUNT(DISTINCT(ItemName)) AS unique_items,
+    COUNT(ItemName) AS total_items_sold
+FROM 
+    nightblooming..Items;
+
+
+SELECT
+    COUNT(DISTINCT(ItemName)) as unique_items
+FROM 
+    nightblooming..Items
+WHERE LOWER(ItemName) LIKE LOWER('%Sample%');
+ 
+
+-- create temp category table
+DROP TABLE IF EXISTS #ItemsCategory
+CREATE TABLE #ItemsCategory
+	(OrderYear int,
+	OrderID float,
+	ItemName nvarchar(255),
+	Category nvarchar (255)
+	)
+INSERT INTO
+	#ItemsCategory
+SELECT 
+    YEAR(OrderDate) AS OrderYear,
+    OrderID,
+    ItemName,
+    CASE 
+        WHEN LOWER(ItemName) LIKE LOWER('%Salve%') THEN 'Salve'
+        WHEN LOWER(ItemName) LIKE LOWER('%Color%') THEN 'Dye'
+        WHEN LOWER(ItemName) LIKE LOWER('%Shampoo%') THEN 'Shampoo'
+        WHEN LOWER(ItemName) LIKE LOWER('%Rinse%') THEN 'Rinse'
+        WHEN LOWER(ItemName) LIKE LOWER('%Conditioner%') THEN 'Conditioner'
+        WHEN LOWER(ItemName) LIKE LOWER('%Oil%') THEN 'Oil'
+        WHEN LOWER(ItemName) LIKE LOWER('%Powder%') THEN 'Powder'
+        WHEN LOWER(ItemName) LIKE LOWER('%Scrub%') THEN 'Scrub'
+        WHEN LOWER(ItemName) LIKE LOWER('%Detangler%') THEN 'Detangler'
+        WHEN LOWER(ItemName) LIKE LOWER('%Tea%') THEN 'Tea'
+        WHEN LOWER(ItemName) LIKE LOWER('%Book%') THEN 'Book'
+        ELSE 'Other'
+    END AS Category
+FROM 
+    nightblooming..Items;
+
+--checking table
+SELECT *
+FROM #ItemsCategory
+ORDER BY OrderYear ASC
+
+
+-- percentage of sales per product by year or month
+SELECT
+	OrderYear,
+	Category,
+	COUNT(ItemName) as total_items
+FROM #ItemsCategory
+GROUP BY OrderYear, Category
+ORDER BY OrderYear
+
+
+
+-- first time customers most often buy
+SELECT TOP 15
+    nbi.ItemName,
+    COUNT(nbi.ItemName) AS times_purchased
+FROM 
+    nightblooming..Items AS nbi
+LEFT JOIN 
+    #CustomerOrders AS cus
+ON 
+    nbi.OrderID = cus.OrderID
+WHERE 
+    cus.CustomerOrderSequence = 1
+GROUP BY 
+    ItemName
+ORDER BY 
+    times_purchased DESC;
+
+
+
+-- most common sample sold
+SELECT 
+    ItemName,
+    COUNT(ItemName) AS times_sold
+FROM 
+    nightblooming..Items
+WHERE 
+    LOWER(ItemName) LIKE LOWER('%Sample%')
+GROUP BY 
+    ItemName
+ORDER BY 
+    times_sold DESC;
+
+
+-- most common full size sold
+SELECT 
+    ItemName,
+    COUNT(ItemName) AS times_sold
+FROM 
+    nightblooming..Items
+WHERE 
+    LOWER(ItemName) NOT LIKE LOWER('%Sample%')
+GROUP BY 
+    ItemName
+ORDER BY 
+    times_sold DESC;
+
+
+-- most common day orders are made --
+SELECT 
+    DAY(OrderDate) AS OrderDay,
+    COUNT(OrderID) AS number_of_orders
+FROM 
+    nightblooming..Orders
+GROUP BY 
+    DAY(OrderDate)
+ORDER BY 
+    number_of_orders DESC;
+
+
+
+SELECT COUNT(FullName)
+FROM (
+    SELECT FullName
+    FROM #CustomerOrders
+    GROUP BY FullName
+    HAVING COUNT(*) = 1
+)
+AS Only_Once;
+--name appears only once - 5494
+
+SELECT COUNT(FullName) AS Repeats
+FROM (
+    SELECT FullName
+    FROM #CustomerOrders
+    GROUP BY FullName
+    HAVING COUNT(*) >= 2
+) AS Repeats;
+--name appears at least twice - 2387
+
+SELECT COUNT(DISTINCT FullName) 
+FROM 
+	#CustomerOrders;
+-- total customers 7881
+
+
+-- # of returning customers who've purchased before / total number of customers * 100
+WITH CalcCTE AS (
+SELECT COUNT(DISTINCT FullName) AS Unique_Customers,
+(SELECT COUNT(FullName)
+FROM (
+    SELECT FullName
+    FROM nightblooming..Orders
+    GROUP BY FullName
+    HAVING COUNT(*) >= 2
+)
+rc) AS Repeat_Customers,
+(SELECT COUNT(FullName)
+FROM (
+    SELECT FullName
+    FROM nightblooming..Orders
+    GROUP BY FullName
+    HAVING COUNT(*) = 1
+)
+oo) AS FirstTime_Customers
+FROM
+	nightblooming..Orders)
+SELECT
+	Unique_Customers,
+	Repeat_Customers,
+	[Repeat_Customers]*100/[Unique_Customers] AS RepeatCustomerPercentage,
+	FirstTime_Customers,
+	[FirstTime_Customers]*100/[Unique_Customers] AS FirstTimeCustomerPercentage
+FROM
+	CalcCTE
+
+
+--most profitable day ever
+SELECT TOP 5
+	CONVERT(DATE, OrderDate) AS Order_Date,
+	SUM(OrderNet) as Most_Net_Profit
+FROM nightblooming..Orders
+GROUP BY OrderDate
+ORDER BY Most_Net_Profit DESC;
+
+--least profitable day ever
+SELECT
+	TOP 5
+	CONVERT(DATE, OrderDate) AS Order_Date,
+	SUM(OrderNet) as Least_Net_Profit
+FROM nightblooming..Orders
+GROUP BY OrderDate
+ORDER BY Least_Net_Profit ASC;
